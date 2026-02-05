@@ -71,3 +71,12 @@ Esta versão otimizada apresenta:
 Para utilizar a escala ou estes scripts, cite o artigo de referência:
 
 > Pedrosa, F. G., & Gomes, C. M. A. (2025). Refinamento de uma medida para a musicoterapia com pessoas com transtorno por uso de substâncias. [No prelo].
+
+## ⚖️ Licença
+
+Este projeto está licenciado sob a **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)**.
+
+*   **Uso Permitido:** O uso para fins de pesquisa acadêmica, científica e prática clínica é livre, desde que citada a fonte original.
+*   **Uso Comercial:** O uso para fins comerciais, lucrativos ou venda de serviços baseados nesta ferramenta é terminantemente proibido sem a autorização expressa, por escrito, dos autores.
+
+Para detalhes completos da licença, visite [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/deed.pt-br).
