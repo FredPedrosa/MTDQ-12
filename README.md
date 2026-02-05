@@ -35,28 +35,49 @@ O modelo Rasch foi calibrado colapsando as categorias originais de 5 pontos para
 A utilização do pacote `eRm` é fundamental por utilizar a **Máxima Verossimilhança Condicional (CML)**.
 
 ```R
-# Instalação do pacote se necessário
-# install.packages("eRm")
-library(eRm)
+if(!require(PP)) install.packages("PP"); library(PP)
 
-# 1. Carregar seus dados recodificados (escala 0-3)
-# O dataframe deve conter as 12 colunas na ordem: 
-# i3, i5, i6, i7, i9, i10, i11, i13, i14, i16, i18, i20
-meus_dados <- read.csv("meus_dados_recodificados.csv")
+# 1. Base simulada de dados de teste (4 participantes, 12 itens)
+set.seed(123)
+dados_teste <- as.data.frame(matrix(sample(0:3, 48, replace = TRUE), nrow = 4, ncol = 12))
+colnames(dados_teste) <- c("i3", "i5", "i6", "i7", "i9", "i10", "i11", "i13", "i14", "i16", "i18", "i20")
 
-# 2. Carregar os parâmetros eta (.rds) calibrados no estudo de Pedrosa & Gomes (2025)
-# O arquivo .rds garante a integridade dos parâmetros salvos
-parametros_fixos <- readRDS("parametros_eta_MTDQ12.rds")
+# 2. Carregar os parâmetros (agora como matriz de thresholds)
+# Se você ainda não salvou como matriz, vamos converter o seu RDS de etas atual:
+# (Supondo que parametros_fixos seja o seu vetor de etas do RDS anterior)
+# Se você já salvou como matriz no passo 1 acima, ignore este 'if'
+if(is.vector(parametros_fixos)) {
+  # Converte vetor de etas para matriz de thresholds que o PP exige
+  # (Considerando 12 itens e 3 limiares por item)
+  pre_matrix <- matrix(thresholds(pcm_model)$threshtable[[1]][, -1], ncol = 3)
+} else {
+  pre_matrix <- parametros_fixos[, -1] # Remove a coluna 'Location' se ela existir
+}
 
-# 3. Estimar os parâmetros de pessoa (Theta) usando parâmetros de item fixos
-# O parâmetro item_params deve receber o vetor de etas carregado
-res_pp <- person.parameter(res = NULL, X = meus_dados, item_params = parametros_fixos)
 
-# 4. Extrair os escores individuais em Logits
-escores_participantes <- res_pp$theta.table$`Person Parameter`
+# 2. Carregar os parâmetros calibrados (RDS)
+par_fixos <- readRDS("parametros_eta_MTDQ12.rds")
 
-# 5. Adicionar os escores ao seu banco de dados para análise clínica
-meus_dados$theta_mtdq12 <- escores_participantes
+# 3. Formatar matriz de parâmetros (3 limiares x 12 itens)
+matriz_par <- matrix(par_fixos, nrow = 3, ncol = 12, byrow = FALSE)
+
+# 4. Estimar as habilidades (Thetas)
+# O uso de slopes = 1 mantém as propriedades do modelo Rasch (PCM)
+estimativa <- PP::PP_gpcm(respm = as.matrix(dados_teste), 
+                          thres = matriz_par, 
+                          slopes = rep(1, 12), 
+                          type = "mle")
+
+# 5. Salvar escores no banco de dados
+dados_teste$escore_rasch <- estimativa$resNP$resMLE
+
+# 5. Extrair os escores corretamente
+# No objeto GPCM, os resultados ficam em calculo$resPP$resPP
+escores_rasch <- calculo$resPP$resPP[, "estimate"]
+erros_padrao  <- calculo$resPP$resPP[, "SE"]
+
+cat("\nEscores Rasch (Logits):\n")
+print(escores_rasch)
 ```
 
 ## 🧠 Propriedades da MTDQ-12
