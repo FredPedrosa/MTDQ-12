@@ -13,7 +13,8 @@ O modelo foi desenvolvido por:
 
 *   `/parametros`: Arquivo `parametros_eta_MTDQ12.rds` contendo os parâmetros de dificuldade (*eta*) dos itens calibrados via CML.
 *   `/sintaxe`: Script R para estimativa de escores (Thetas) em novos bancos de dados.
-
+*   `/analise.pdf`: Análise rodada em formato pdf.
+*   `/analise.r`: Sintaxe bruta para análise.
 ---
 
 ## ⚙️ Como Estimar os Escores (Habilidade Rasch)
