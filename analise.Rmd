@@ -1,0 +1,465 @@
+---
+title: "Refinamento da MTDQ-12"
+subtitle: "Material Suplementar - Análises"
+author: "Frederico Pedrosa e Cristiano Gomes"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    latex_engine: xelatex  
+    highlight: tango
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    theme: cosmo
+    highlight: tango
+header-includes:
+  - \usepackage{placeins} 
+---
+
+# Set up
+
+## Instalação e Carregamento de Pacotes
+
+```{r setup,warning=FALSE,message=FALSE,results='hide'}
+  
+# Lista de pacotes necessários (foco na família Rasch)  
+pacotes <- c("eRm", "psych", "ggplot2", "gridExtra","lavaan", "semTools",   
+               "knitr", "dplyr", "reshape2", "RColorBrewer")  
+
+# Função para verificar e instalar pacotes se necessário  
+instalar_se_necessario <- function(pacotes) {  
+  pacotes_faltando <- pacotes[!(pacotes %in% installed.packages()[,"Package"])]  
+  if(length(pacotes_faltando) > 0) {  
+    install.packages(pacotes_faltando, dependencies = TRUE)  
+  }  
+}  
+
+# Verificar e instalar pacotes faltando  
+instalar_se_necessario(pacotes)  
+
+# Carregar todos os pacotes  
+lapply(pacotes, library, character.only = TRUE)
+
+# Carregando dados
+
+dados <- readRDS("mtdq_limpo.rds")
+
+
+```
+
+## Carregamento e Verificação Estrutural da Base
+
+Carregamos o banco de dados original contendo as 20 variáveis (i1 a i20) registradas na escala Likert original de 5 pontos (1 = Nunca, 2 = Raramente, 3 = Às vezes, 4 = Muitas vezes, 5 = Sempre).
+
+```{r carregar_dados}
+# Certifique-se de que o arquivo 'mtdq_limpo.rds' está no mesmo diretório de trabalho
+dados_original <- readRDS("mtdq_limpo.rds")
+
+# Extração estrita dos 20 itens numéricos
+itens_20 <- paste0("i", 1:20)
+dados_20 <- dados_original[, itens_20]
+
+# Tabela descritiva de frequência geral por categoria de resposta
+tabela_freq <- table(unlist(dados_20))
+prop_freq <- prop.table(tabela_freq) * 100
+
+df_desc_cat <- data.frame(
+  Categoria = names(tabela_freq),
+  Frequencia_Absoluta = as.vector(tabela_freq),
+  Porcentagem = round(as.vector(prop_freq), 2)
+)
+
+knitr::kable(
+  df_desc_cat, 
+  caption = "Distribuição geral das respostas nas 5 categorias originais (20 itens, N = 220).",
+  booktabs = TRUE
+)
+
+```
+
+# Etapa 1: Diagnóstico das Categorias Originais (20 Itens, 5 Pontos)
+
+A primeira etapa avalia se a escala Likert original de 5 pontos apresenta monotonicidade nos limiares (*thresholds*). Estimamos os modelos de Créditos Parciais (PCM) e de Escala Graduada (RSM) para os 20 itens originais.
+
+```{r etapa1_modelos_5cat, warning=FALSE}
+# Ajuste dos modelos com 5 categorias (dados_20)
+pcm_20_5cat <- PCM(dados_20)
+rsm_20_5cat <- RSM(dados_20)
+
+# Extração de limiares e dificuldades
+limiares_pcm_5cat <- thresholds(pcm_20_5cat)$threshtable[[1]]
+limiares_rsm_5cat <- thresholds(rsm_20_5cat)$threshtable[[1]]
+
+# Tabela consolidada comparativa (Tabela 1 do artigo)
+tab1_rsm <- data.frame(
+  Item = 1:20,
+  Beta_RSM = round(limiares_rsm_5cat[, "Location"], 2),
+  L1_RSM = round(limiares_rsm_5cat[, "Threshold 1"], 2),
+  L2_RSM = round(limiares_rsm_5cat[, "Threshold 2"], 2),
+  L3_RSM = round(limiares_rsm_5cat[, "Threshold 3"], 2),
+  L4_RSM = round(limiares_rsm_5cat[, "Threshold 4"], 2)
+)
+
+tab1_pcm <- data.frame(
+  Beta_PCM = round(limiares_pcm_5cat[, "Location"], 2),
+  L1_PCM = round(limiares_pcm_5cat[, "Threshold 1"], 2),
+  L2_PCM = round(limiares_pcm_5cat[, "Threshold 2"], 2),
+  L3_PCM = round(limiares_pcm_5cat[, "Threshold 3"], 2),
+  L4_PCM = round(limiares_pcm_5cat[, "Threshold 4"], 2)
+)
+
+tab1_consolidada <- cbind(tab1_rsm, tab1_pcm)
+
+knitr::kable(
+  tab1_consolidada,
+  caption = "Tabela 1: Dificuldade e limiares dos itens estimados pelos modelos RSM e PCM (5 categorias).",
+  booktabs = TRUE,
+  row.names = FALSE
+)
+
+```
+
+Como observado na Tabela 1, o primeiro limiar é sistematicamente superior ao segundo (l1 > l2) em ambos os modelos, evidenciando desordem de limiares: os participantes não discriminam adequadamente as opções 1 (Nunca) e 2 (Raramente).
+
+# Etapa 2: Recodificação das Categorias e Seleção de Modelo (PCM vs. RSM)
+
+Conforme a literatura psicométrica, colapsamos as categorias adjacentes problemáticas (1 e 2 tornam-se 1; 3 vira 2; 4 vira 3; 5 vira 4). A escala passa a ter 4 categorias de resposta (3 limiares).
+
+```{r etapa2_recodificacao, warning=FALSE}
+
+# Recodificação dos 20 itens
+recodificar_4cat <- function(x) {
+  dplyr::case_when(
+    x %in% c(1, 2) ~ 1,
+    x == 3         ~ 2,
+    x == 4         ~ 3,
+    x == 5         ~ 4,
+    TRUE           ~ NA_real_
+  )
+}
+
+dadotr <- as.data.frame(lapply(dados_20, recodificar_4cat))
+
+# Ajuste dos modelos com 4 categorias
+pcm_20_4cat <- PCM(dadotr)
+rsm_20_4cat <- RSM(dadotr)
+
+# Limiares obtidos após colapso (Tabela 2 do artigo)
+lim_pcm_4cat <- thresholds(pcm_20_4cat)$threshtable[[1]]
+lim_rsm_4cat <- thresholds(rsm_20_4cat)$threshtable[[1]]
+
+tab2_comparativa <- data.frame(
+  Item = 1:20,
+  Beta_RSM = round(lim_rsm_4cat[, "Location"], 2),
+  L1_RSM   = round(lim_rsm_4cat[, "Threshold 1"], 2),
+  L2_RSM   = round(lim_rsm_4cat[, "Threshold 2"], 2),
+  L3_RSM   = round(lim_rsm_4cat[, "Threshold 3"], 2),
+  Beta_PCM = round(lim_pcm_4cat[, "Location"], 2),
+  L1_PCM   = round(lim_pcm_4cat[, "Threshold 1"], 2),
+  L2_PCM   = round(lim_pcm_4cat[, "Threshold 2"], 2),
+  L3_PCM   = round(lim_pcm_4cat[, "Threshold 3"], 2)
+)
+
+knitr::kable(
+  tab2_comparativa,
+  caption = "Tabela 2: Dificuldade e limiares após recodificação para 4 categorias.",
+  booktabs = TRUE,
+  row.names = FALSE
+)
+```
+
+## Comparação Formal entre PCM e RSM
+
+Comparamos os dois modelos via Teste de Razão de Verossimilhança (LR Test) e critérios de informação (AIC e BIC sob verossimilhança condicional), além de testes de invariância de Wald no nível do item.
+
+```{r etapa2_comparacao_formal}
+
+pp_pcm_20 <- person.parameter(pcm_20_4cat)
+pp_rsm_20 <- person.parameter(rsm_20_4cat)
+
+ic_pcm <- IC(pp_pcm_20)$ICtable
+ic_rsm <- IC(pp_rsm_20)$ICtable
+
+# Extração dos valores da verossimilhança condicional (CML)
+ll_pcm  <- ic_pcm["conditional log-lik", "value"]
+npar_pcm <- ic_pcm["conditional log-lik", "npar"]
+aic_pcm <- ic_pcm["conditional log-lik", "AIC"]
+bic_pcm <- ic_pcm["conditional log-lik", "BIC"]
+
+ll_rsm  <- ic_rsm["conditional log-lik", "value"]
+npar_rsm <- ic_rsm["conditional log-lik", "npar"]
+aic_rsm <- ic_rsm["conditional log-lik", "AIC"]
+bic_rsm <- ic_rsm["conditional log-lik", "BIC"]
+
+# Estatística de Razão de Verossimilhança
+lr_stat <- -2 * (ll_rsm - ll_pcm)
+df_diff <- npar_pcm - npar_rsm
+p_lr    <- pchisq(lr_stat, df = df_diff, lower.tail = FALSE)
+
+# Testes de Wald no nível do item
+wald_rsm <- Waldtest(rsm_20_4cat, splitcr = "median")
+wald_pcm <- Waldtest(pcm_20_4cat, splitcr = "median")
+
+n_prob_wald_rsm <- sum(wald_rsm$coef.table[, "p-value"] < 0.05, na.rm = TRUE)
+n_prob_wald_pcm <- sum(wald_pcm$coef.table[, "p-value"] < 0.05, na.rm = TRUE)
+
+df_comparacao <- data.frame(
+  Modelo = c("Créditos Parciais (PCM)", "Escala Graduada (RSM)"),
+  LogLik_CML = round(c(ll_pcm, ll_rsm), 2),
+  N_Parametros = c(npar_pcm, npar_rsm),
+  AIC = round(c(aic_pcm, aic_rsm), 2),
+  BIC = round(c(bic_pcm, bic_rsm), 2),
+  Wald_Parametros_p005 = c(n_prob_wald_pcm, n_prob_wald_rsm)
+)
+
+knitr::kable(
+  df_comparacao,
+  caption = "Comparação de ajuste global e invariância entre PCM e RSM (20 itens, 4 categorias).",
+  booktabs = TRUE
+)
+```
+
+O Teste de Razão de Verossimilhança comprovou a superioridade do PCM (χ2(38) = 122,93; p < 0,001). Além disso, o teste de Wald revelou que o RSM apresentou 31 parâmetros com violação de invariância (p < 0,05), contra apenas 2 parâmetros no PCM. Portanto, o modelo de Créditos Parciais foi o escolhido.
+
+# Etapa 3: Refinamento Iterativo e Poda de Itens
+
+A poda ocorreu em duas fases consecutivas:
+*1. Fase 1 (Limiares)*: Remoção dos itens i1, i4 e i12, que mantiveram inversão de limiares no PCM após o colapso de categorias.
+*2. Fase 2 (Invariância)*: Remoção dos itens i2, i8, i15, i17 e i19, que apresentaram violações nos testes de Andersen e Wald.
+
+```{r etapa3_poda_itens}
+# Fase 1: Remoção de itens com desordem de limiares
+itens_remocao_fase1 <- c("i1", "i4", "i12")
+dadotr2 <- dadotr[, !names(dadotr) %in% itens_remocao_fase1]
+
+# Fase 2: Remoção de itens com desajuste de invariância
+itens_remocao_fase2 <- c("i2", "i8", "i15", "i17", "i19")
+dadotr_final <- dadotr2[, !names(dadotr2) %in% itens_remocao_fase2]
+
+# Verificação do conjunto final de 12 itens
+itens_mtdq12 <- names(dadotr_final)
+
+```
+
+# Etapa 4: Calibração do Modelo Final Rasch PCM (MTDQ-12)
+
+Calibramos o modelo PCM com os 12 itens finais e inspecionamos o ajuste dos itens, limiares, invariância e mapa de itens-pessoas.
+
+```{r etapa4_calibracao_final}
+# Modelo Rasch PCM final
+pcm_final <- PCM(dadotr_final)
+pp_final  <- person.parameter(pcm_final)
+
+# 1. Testes de Invariância
+andersen_final <- LRtest(pcm_final, splitcr = "median")
+wald_final     <- Waldtest(pcm_final, splitcr = "median")
+
+# 2. Ajuste dos Itens (Infit e Outfit MNSQ)
+fit_itens <- itemfit(pp_final)
+
+# Tabela 3 do artigo
+tab3_fit <- data.frame(
+  Item = names(fit_itens$i.fit),
+  Infit_MNSQ = round(fit_itens$i.infitMSQ, 3),
+  Outfit_MNSQ = round(fit_itens$i.outfitMSQ, 3),
+  Infit_t = round(fit_itens$i.infitZ, 2),
+  Outfit_t = round(fit_itens$i.outfitZ, 2),
+  Discriminacao = round(fit_itens$i.disc, 3)
+)
+
+knitr::kable(
+  tab3_fit,
+  caption = "Tabela 3: Estatísticas de ajuste Infit e Outfit MNSQ dos itens da MTDQ-12.",
+  booktabs = TRUE,
+  row.names = FALSE
+)
+
+```
+
+## Parâmetros de Dificuldade e Limiares da MTDQ-12
+
+```{r etapa4_tabela_limiares}
+limiares_final <- thresholds(pcm_final)$threshtable[[1]]
+
+# Tabela 4 do artigo ordenada por dificuldade crescente
+tab4_calibracao <- data.frame(
+  Item = rownames(limiares_final),
+  Beta = round(limiares_final[, "Location"], 3),
+  L1   = round(limiares_final[, "Threshold 1"], 3),
+  L2   = round(limiares_final[, "Threshold 2"], 3),
+  L3   = round(limiares_final[, "Threshold 3"], 3)
+)
+
+tab4_calibracao <- tab4_calibracao[order(tab4_calibracao$Beta), ]
+
+knitr::kable(
+  tab4_calibracao,
+  caption = "Tabela 4: Parâmetros de dificuldade e limiares ordenados da MTDQ-12.",
+  booktabs = TRUE,
+  row.names = FALSE
+)
+
+```
+
+## Confiabilidade de Separação e Mapa de Itens-Pessoas
+
+```{r etapa4_confiabilidade_mapa, fig.cap="Figura 1: Mapa de Itens-Pessoas (Wright Map) para a MTDQ-12."}
+
+# Confiabilidade de Separação das Pessoas (Separation Reliability)
+sep_rel <- SepRel(pp_final)$sep.rel
+
+thetas <- pp_final$theta.table$`Person Parameter`
+desc_thetas <- c(
+  Media = mean(thetas, na.rm = TRUE),
+  DP = sd(thetas, na.rm = TRUE),
+  Minimo = min(thetas, na.rm = TRUE),
+  Maximo = max(thetas, na.rm = TRUE),
+  Sep_Reliability = sep_rel
+)
+
+knitr::kable(
+  as.data.frame(t(round(desc_thetas, 3))),
+  caption = "Estatísticas descritivas dos parâmetros de habilidade (Theta) e confiabilidade Rasch.",
+  booktabs = TRUE
+)
+
+# Wright Map
+plotPImap(pcm_final, sorted = TRUE, main = "Mapa de Itens-Pessoas: MTDQ-12")
+
+```
+
+# Etapa 5: Invariância de Medida por Sexo (DIF)
+
+O Teste de Andersen confirmou a equivalência estrutural global entre os sexos (LR = 42,28; df = 35; p = 0,185). No nível dos itens, apenas o parâmetro beta i11.c3 indicou significância marginal bruta (z = 2,067; p = 0,0387), a qual perde significância após a correção para múltiplos testes (corte Bonferroni para 12 itens: α = 0,05/12 ≈ 0,0042).
+
+```{r etapa5_dif_sexo}
+# Leitura do vetor de sexo da amostra (N = 220)
+dados_sexo <- readRDS("mtdq_limpo_sexo.rds")
+sexo_vetor <- dados_sexo$Sexo
+
+# Teste global de Andersen por sexo
+andersen_sexo <- LRtest(pcm_final, splitcr = sexo_vetor)
+
+# Teste de Wald item a item por sexo
+wald_sexo <- Waldtest(pcm_final, splitcr = sexo_vetor)
+
+df_dif <- data.frame(
+  Parametro = rownames(wald_sexo$coef.table),
+  Z = round(wald_sexo$coef.table[, "z-statistic"], 3),
+  p_valor = round(wald_sexo$coef.table[, "p-value"], 4)
+)
+
+# Itens que apresentaram p < 0.05 antes da correção
+itens_dif_bruto <- df_dif[df_dif$p_valor < 0.05, ]
+
+knitr::kable(
+  itens_dif_bruto,
+  caption = "Parâmetros avaliados no Teste de Wald por sexo com p bruto < 0,05.",
+  booktabs = TRUE,
+  row.names = FALSE
+)
+
+```
+
+# Etapa 6: Análise Fatorial Confirmatória e Confiabilidade Composta
+
+Para corroborar a dimensionalidade e a integração métrica, ajustamos uma Análise Fatorial Confirmatória (AFC) univariada com estimador robusto para dados ordinais (WLSMV) no pacote lavaan.
+
+```{r etapa6_afc_lavaan}
+
+modelo_cfa_mtdq12 <- '
+  MTDQ =~ i3 + i5 + i6 + i7 + i9 + i10 + i11 + i13 + i14 + i16 + i18 + i20
+'
+
+fit_cfa <- cfa(
+  model = modelo_cfa_mtdq12,
+  data = dadotr_final,
+  ordered = TRUE,
+  estimator = "WLSMV",
+  std.lv = TRUE
+)
+
+# Índices de Ajuste
+indices_fit <- fitMeasures(
+  fit_cfa, 
+  fit.measures = c(
+    "chisq", "df", "pvalue", "cfi", "tli", "rmsea", "srmr")
+)
+
+# Confiabilidade Composta Ômega
+omega_mtdq12 <- semTools::compRelSEM(fit_cfa)$MTDQ
+
+df_fit_resumo <- data.frame(
+  Indice = c(
+    "Qui-Quadrado Standard (df)", "CFI", "TLI", "RMSEA","SRMR", "Ômega de McDonald (w)"
+  ),
+  Valor = c(
+    paste0(round(indices_fit["chisq"], 2), " (", indices_fit["df"], ")"),
+    round(indices_fit["cfi"], 3),
+    round(indices_fit["tli"], 3),
+    round(indices_fit["rmsea"], 3),
+    round(indices_fit["srmr"], 3),
+    round(omega_mtdq12, 3)
+  )
+)
+
+knitr::kable(
+  df_fit_resumo,
+  caption = "Índices de ajuste da AFC (WLSMV) e confiabilidade da MTDQ-12.",
+  booktabs = TRUE
+)
+```
+
+## Estabilidade do Construto (Correlação com o Modelo Bifatorial Original)
+
+Para atestar que a redução de 20 para 12 itens preservou a representação do traço latente, correlacionamos os escores fatoriais da MTDQ-12 com os escores do fator geral do modelo bifatorial original de 20 itens.
+
+```{r etapa6_correlacao_bifatorial}
+# Especificação do modelo bifatorial original com os 20 itens (5 categorias)
+modelo_bifatorial <- '
+  cog =~ i3 + i4 + 0*i5 + i7 + i8 + 0*i9 + i12 + i14 + 0*i15 + i20
+  com =~ i1 + 0*i2 + i6 + i10 + i11 + i13 + i16 + i17 + i18 + i19
+  geral =~ i1 + i2 + i3 + i4 + i5 + i6 + i7 + i8 + i9 + i10 + 
+           i11 + 0*i12 + i13 + i14 + i15 + i16 + i17 + i18 + i19 + i20
+'
+
+fit_bifatorial <- cfa(
+  model = modelo_bifatorial,
+  data = dados_original,
+  ordered = TRUE,
+  orthogonal = TRUE,
+  estimator = "WLSMV",
+  std.lv = TRUE
+)
+
+# Extração dos escores fatoriais
+escores_mtdq12 <- as.vector(lavPredict(fit_cfa))
+escores_bif_geral <- as.vector(lavPredict(fit_bifatorial)[, "geral"])
+
+# Correlações paramétrica e não-paramétrica
+cor_pearson  <- cor(escores_mtdq12, escores_bif_geral, method = "pearson")
+cor_spearman <- cor(escores_mtdq12, escores_bif_geral, method = "spearman")
+
+df_correlacoes <- data.frame(
+  Metodo = c("Pearson (r)", "Spearman (rho)"),
+  Coeficiente = round(c(cor_pearson, cor_spearman), 3)
+)
+
+knitr::kable(
+  df_correlacoes,
+  caption = "Correlação entre os escores fatoriais da MTDQ-12 e o fator geral bifatorial (20 itens).",
+  booktabs = TRUE
+)
+
+```
+
+```{r}
+sessionInfo()
+
+```
+
